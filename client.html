@@ -52,10 +52,18 @@
       .received-message {
         text-align: left;
       }
+
+      #typing-indicator {
+        height: 20px;
+        padding: 0 10px;
+        font-style: italic;
+        color: #888;
+      }
     </style>
   </head>
   <body>
     <div id="chat-box"></div>
+    <div id="typing-indicator"></div>
     <div id="input-area">
       <input
         type="text"
@@ -67,80 +75,91 @@
     </div>
 
     <script>
-      // --- WebSocket 连接逻辑 (与之前相同) ---
-      const socket = new WebSocket("ws://localhost:8080/chat");
+      const socket = new WebSocket("ws://localhost:8080");
 
-      // --- 获取页面 UI 元素 ---
       const chatBox = document.getElementById("chat-box");
       const messageInput = document.getElementById("message-input");
       const sendButton = document.getElementById("send-button");
+      const typingIndicatorDiv = document.getElementById("typing-indicator");
 
-      const MAX_MESSAGES = 50; // 聊天框最多显示的消息数
+      const MAX_MESSAGES = 50;
       const DELETE_BATCH_SIZE = 10;
-      let index = 0;
+      let typingTimer = null;
+      let myUsername = null;
 
-      // --- 核心功能函数 ---
-
-      /**
-       * 在聊天框显示一条消息
-       * @param {string} message - 要显示的消息内容
-       * @param {string} type - 消息类型 ('server', 'sent', 'received')
-       */
       function displayMessage(message, type) {
         const p = document.createElement("p");
         p.textContent = message;
-        p.className = type + "-message"; // 应用 CSS 样式
+        p.className = type + "-message";
         chatBox.appendChild(p);
 
-        while (chatBox.children.length > MAX_MESSAGES) {
-          // chatBox.removeChild(chatBox.firstChild);
+        if (chatBox.children.length > MAX_MESSAGES) {
           for (let i = 0; i < DELETE_BATCH_SIZE && chatBox.firstChild; i++) {
             chatBox.removeChild(chatBox.firstChild);
           }
         }
-
-        // 自动滚动到最新消息
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
-      /**
-       * 发送消息的函数
-       */
-      function sendMessage() {
-        const message = messageInput.value;
-        if (message.trim() === "") {
-          return; // 不发送空消息
-        }
-
-        if (socket.readyState === WebSocket.OPEN) {
-          socket.send(message);
-          // 立即在自己的聊天框显示已发送的消息 (优化用户体验)
-          displayMessage(`我: ${message}`, "sent");
-          messageInput.value = ""; // 清空输入框
-        } else {
-          displayMessage("连接已断开，无法发送消息。", "server");
-        }
+      function sendTypingState(isTyping) {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        const stateMessage = {
+          type: isTyping ? "TYPING_START" : "TYPING_STOP",
+        };
+        socket.send(JSON.stringify(stateMessage));
       }
 
-      // --- WebSocket 事件监听 ---
+      function sendMessage() {
+        const messageContent = messageInput.value;
+        if (messageContent.trim() === "") {
+          return;
+        }
+
+        const chatMessage = { type: "CHAT", message: messageContent };
+        socket.send(JSON.stringify(chatMessage));
+        displayMessage(`我: ${messageContent}`, "sent");
+        messageInput.value = "";
+
+        clearTimeout(typingTimer);
+        sendTypingState(false);
+      }
 
       socket.onopen = function (event) {
-        displayMessage("成功连接到聊天室服务器。", "server");
+        console.log("WebSocket connection established.");
       };
 
-      /*
-        WebSocket 客户端的“收到消息”事件处理函数。
-      */
       socket.onmessage = function (event) {
-        console.log("收到消息: ", event.data);
+        const data = JSON.parse(event.data);
+        const { type, sender, message } = data;
 
-        // 将json字符串解析为对象
-        const dataObject = JSON.parse(event.data);
-        const { sender, message } = dataObject;
-
-        index++;
-        // 服务器接收他人消息并显示
-        displayMessage(`${index}-${sender}: ${message}`, "received");
+        switch (type) {
+          case "SYSTEM":
+            if (message.startsWith("欢迎 ")) {
+              const parts = message.split(" ");
+              if (parts.length > 1) {
+                myUsername = parts[1];
+                console.log("My username is set to:", myUsername);
+              }
+            }
+            displayMessage(message, "server");
+            break;
+          case "CHAT":
+            if (sender !== myUsername) {
+              const formattedMessage = `${sender}: ${message}`;
+              displayMessage(formattedMessage, "received");
+            }
+            break;
+          case "TYPING_START":
+            if (sender !== myUsername) {
+              typingIndicatorDiv.textContent = `${sender} 正在输入...`;
+            }
+            break;
+          case "TYPING_STOP":
+            if (typingIndicatorDiv.textContent.startsWith(sender)) {
+              typingIndicatorDiv.textContent = "";
+            }
+            break;
+        }
       };
 
       socket.onclose = function (event) {
@@ -152,16 +171,20 @@
         console.error("WebSocket Error:", error);
       };
 
-      // --- 页面 UI 事件监听 ---
-
-      // 点击发送按钮
       sendButton.addEventListener("click", sendMessage);
 
-      // 在输入框按 Enter 键
       messageInput.addEventListener("keyup", function (event) {
         if (event.key === "Enter") {
           sendMessage();
         }
+      });
+
+      messageInput.addEventListener("input", () => {
+        clearTimeout(typingTimer);
+        sendTypingState(true);
+        typingTimer = setTimeout(() => {
+          sendTypingState(false);
+        }, 1500);
       });
     </script>
   </body>
