@@ -116,9 +116,18 @@
         displayMessage("成功连接到聊天室服务器。", "server");
       };
 
+      /*
+        WebSocket 客户端的“收到消息”事件处理函数。
+      */
       socket.onmessage = function (event) {
-        // 注意：服务器广播时不会发回给发送者自己，所以这里都是接收别人的消息
-        displayMessage(`对方: ${event.data}`, "received");
+        console.log("收到消息: ", event.data);
+
+        // 将json字符串解析为对象
+        const dataObject = JSON.parse(event.data);
+        const { sender, message } = dataObject;
+
+        // 服务器接收他人消息并显示
+        displayMessage(`${sender}: ${message}`, "received");
       };
 
       socket.onclose = function (event) {
