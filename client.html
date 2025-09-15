@@ -44,6 +44,7 @@
       .server-message {
         color: #888;
         font-style: italic;
+        text-align: center;
       }
       .sent-message {
         text-align: right;
@@ -54,7 +55,7 @@
       }
       #typing-indicator {
         height: 20px;
-        padding: 0 10px;
+        padding: 0 15px;
         font-style: italic;
         color: #888;
       }
@@ -122,18 +123,16 @@
 
       function sendTypingState(isTyping) {
         if (socket.readyState !== WebSocket.OPEN) return;
-        const stateMessage = {
-          type: isTyping ? "TYPING_START" : "TYPING_STOP",
-        };
-        socket.send(JSON.stringify(stateMessage));
+        socket.send(
+          JSON.stringify({ type: isTyping ? "TYPING_START" : "TYPING_STOP" })
+        );
       }
 
       function sendMessage() {
         const messageContent = messageInput.value;
-        if (messageContent.trim() === "") return;
+        if (messageContent.trim() === "" || !myUsername) return;
 
-        const chatMessage = { type: "CHAT", message: messageContent };
-        socket.send(JSON.stringify(chatMessage));
+        socket.send(JSON.stringify({ type: "CHAT", message: messageContent }));
         displayMessage(`我: ${messageContent}`, "sent");
         messageInput.value = "";
 
@@ -142,21 +141,29 @@
       }
 
       socket.onopen = function (event) {
-        console.log("WebSocket connection established.");
+        console.log(
+          "WebSocket connection established. Please set your nickname."
+        );
+        const nickname = prompt(
+          "请输入您的昵称 (2-15个字符):",
+          `访客${Math.floor(1000 + Math.random() * 9000)}`
+        );
+        if (nickname) {
+          socket.send(
+            JSON.stringify({ type: "SET_NICKNAME", nickname: nickname })
+          );
+        }
       };
 
       socket.onmessage = function (event) {
         const data = JSON.parse(event.data);
-        const { type, sender, message } = data;
+        const { type, sender, message, nickname } = data;
 
         switch (type) {
           case "SYSTEM":
-            if (message.startsWith("欢迎 ")) {
-              const parts = message.split(" ");
-              if (parts.length > 1) {
-                myUsername = parts[1];
-                console.log("My username is set to:", myUsername);
-              }
+            if (nickname) {
+              myUsername = nickname;
+              console.log("My username is set to:", myUsername);
             }
             displayMessage(message, "server");
             break;
@@ -198,10 +205,12 @@
 
       messageInput.addEventListener("input", () => {
         clearTimeout(typingTimer);
-        sendTypingState(true);
-        typingTimer = setTimeout(() => {
-          sendTypingState(false);
-        }, 1500);
+        if (myUsername) {
+          sendTypingState(true);
+          typingTimer = setTimeout(() => {
+            sendTypingState(false);
+          }, 1500);
+        }
       });
     </script>
   </body>
