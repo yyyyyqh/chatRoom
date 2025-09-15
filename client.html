@@ -52,7 +52,6 @@
       .received-message {
         text-align: left;
       }
-
       #typing-indicator {
         height: 20px;
         padding: 0 10px;
@@ -82,10 +81,11 @@
       const sendButton = document.getElementById("send-button");
       const typingIndicatorDiv = document.getElementById("typing-indicator");
 
-      const MAX_MESSAGES = 50;
-      const DELETE_BATCH_SIZE = 10;
+      const MAX_MESSAGES = 100;
+      const DELETE_BATCH_SIZE = 20;
       let typingTimer = null;
       let myUsername = null;
+      const typingUsers = new Set();
 
       function displayMessage(message, type) {
         const p = document.createElement("p");
@@ -101,6 +101,25 @@
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
+      function updateTypingIndicator() {
+        const users = Array.from(typingUsers);
+        if (users.length === 0) {
+          typingIndicatorDiv.textContent = "";
+          return;
+        }
+        if (users.length === 1) {
+          typingIndicatorDiv.textContent = `${users[0]} 正在输入...`;
+          return;
+        }
+        if (users.length <= 3) {
+          typingIndicatorDiv.textContent = `${users.join("、")} 正在输入...`;
+          return;
+        }
+        typingIndicatorDiv.textContent = `${users
+          .slice(0, 2)
+          .join("、")} 及其他 ${users.length - 2} 人正在输入...`;
+      }
+
       function sendTypingState(isTyping) {
         if (socket.readyState !== WebSocket.OPEN) return;
         const stateMessage = {
@@ -111,9 +130,7 @@
 
       function sendMessage() {
         const messageContent = messageInput.value;
-        if (messageContent.trim() === "") {
-          return;
-        }
+        if (messageContent.trim() === "") return;
 
         const chatMessage = { type: "CHAT", message: messageContent };
         socket.send(JSON.stringify(chatMessage));
@@ -144,6 +161,8 @@
             displayMessage(message, "server");
             break;
           case "CHAT":
+            typingUsers.delete(sender);
+            updateTypingIndicator();
             if (sender !== myUsername) {
               const formattedMessage = `${sender}: ${message}`;
               displayMessage(formattedMessage, "received");
@@ -151,13 +170,13 @@
             break;
           case "TYPING_START":
             if (sender !== myUsername) {
-              typingIndicatorDiv.textContent = `${sender} 正在输入...`;
+              typingUsers.add(sender);
+              updateTypingIndicator();
             }
             break;
           case "TYPING_STOP":
-            if (typingIndicatorDiv.textContent.startsWith(sender)) {
-              typingIndicatorDiv.textContent = "";
-            }
+            typingUsers.delete(sender);
+            updateTypingIndicator();
             break;
         }
       };
@@ -174,9 +193,7 @@
       sendButton.addEventListener("click", sendMessage);
 
       messageInput.addEventListener("keyup", function (event) {
-        if (event.key === "Enter") {
-          sendMessage();
-        }
+        if (event.key === "Enter") sendMessage();
       });
 
       messageInput.addEventListener("input", () => {
