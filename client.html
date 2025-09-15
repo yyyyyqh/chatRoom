@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <title>WebSocket 聊天室</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        margin: 0;
+      }
+      #chat-box {
+        flex-grow: 1;
+        border: 1px solid #ccc;
+        margin: 10px;
+        padding: 10px;
+        overflow-y: auto;
+      }
+      #chat-box p {
+        margin: 5px 0;
+      }
+      #input-area {
+        display: flex;
+        padding: 10px;
+      }
+      #message-input {
+        flex-grow: 1;
+        border: 1px solid #ccc;
+        padding: 8px;
+      }
+      #send-button {
+        border: 1px solid #007bff;
+        background-color: #007bff;
+        color: white;
+        padding: 8px 15px;
+        margin-left: 10px;
+        cursor: pointer;
+      }
+      #send-button:hover {
+        background-color: #0056b3;
+      }
+      .server-message {
+        color: #888;
+        font-style: italic;
+      }
+      .sent-message {
+        text-align: right;
+        color: #0056b3;
+      }
+      .received-message {
+        text-align: left;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="chat-box"></div>
+    <div id="input-area">
+      <input
+        type="text"
+        id="message-input"
+        placeholder="输入消息..."
+        autocomplete="off"
+      />
+      <button id="send-button">发送</button>
+    </div>
+
+    <script>
+      // --- WebSocket 连接逻辑 (与之前相同) ---
+      const socket = new WebSocket("ws://localhost:8080");
+
+      // --- 获取页面 UI 元素 ---
+      const chatBox = document.getElementById("chat-box");
+      const messageInput = document.getElementById("message-input");
+      const sendButton = document.getElementById("send-button");
+
+      // --- 核心功能函数 ---
+
+      /**
+       * 在聊天框显示一条消息
+       * @param {string} message - 要显示的消息内容
+       * @param {string} type - 消息类型 ('server', 'sent', 'received')
+       */
+      function displayMessage(message, type) {
+        const p = document.createElement("p");
+        p.textContent = message;
+        p.className = type + "-message"; // 应用 CSS 样式
+        chatBox.appendChild(p);
+        // 自动滚动到最新消息
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+
+      /**
+       * 发送消息的函数
+       */
+      function sendMessage() {
+        const message = messageInput.value;
+        if (message.trim() === "") {
+          return; // 不发送空消息
+        }
+
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(message);
+          // 立即在自己的聊天框显示已发送的消息 (优化用户体验)
+          displayMessage(`我: ${message}`, "sent");
+          messageInput.value = ""; // 清空输入框
+        } else {
+          displayMessage("连接已断开，无法发送消息。", "server");
+        }
+      }
+
+      // --- WebSocket 事件监听 ---
+
+      socket.onopen = function (event) {
+        displayMessage("成功连接到聊天室服务器。", "server");
+      };
+
+      socket.onmessage = function (event) {
+        // 注意：服务器广播时不会发回给发送者自己，所以这里都是接收别人的消息
+        displayMessage(`对方: ${event.data}`, "received");
+      };
+
+      socket.onclose = function (event) {
+        displayMessage("您已从聊天室断开连接。", "server");
+      };
+
+      socket.onerror = function (error) {
+        displayMessage("连接发生错误。", "server");
+        console.error("WebSocket Error:", error);
+      };
+
+      // --- 页面 UI 事件监听 ---
+
+      // 点击发送按钮
+      sendButton.addEventListener("click", sendMessage);
+
+      // 在输入框按 Enter 键
+      messageInput.addEventListener("keyup", function (event) {
+        if (event.key === "Enter") {
+          sendMessage();
+        }
+      });
+    </script>
+  </body>
+</html>
