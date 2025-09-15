@@ -68,12 +68,16 @@
 
     <script>
       // --- WebSocket 连接逻辑 (与之前相同) ---
-      const socket = new WebSocket("ws://localhost:8080");
+      const socket = new WebSocket("ws://localhost:8080/chat");
 
       // --- 获取页面 UI 元素 ---
       const chatBox = document.getElementById("chat-box");
       const messageInput = document.getElementById("message-input");
       const sendButton = document.getElementById("send-button");
+
+      const MAX_MESSAGES = 50; // 聊天框最多显示的消息数
+      const DELETE_BATCH_SIZE = 10;
+      let index = 0;
 
       // --- 核心功能函数 ---
 
@@ -87,6 +91,14 @@
         p.textContent = message;
         p.className = type + "-message"; // 应用 CSS 样式
         chatBox.appendChild(p);
+
+        while (chatBox.children.length > MAX_MESSAGES) {
+          // chatBox.removeChild(chatBox.firstChild);
+          for (let i = 0; i < DELETE_BATCH_SIZE && chatBox.firstChild; i++) {
+            chatBox.removeChild(chatBox.firstChild);
+          }
+        }
+
         // 自动滚动到最新消息
         chatBox.scrollTop = chatBox.scrollHeight;
       }
@@ -126,8 +138,9 @@
         const dataObject = JSON.parse(event.data);
         const { sender, message } = dataObject;
 
+        index++;
         // 服务器接收他人消息并显示
-        displayMessage(`${sender}: ${message}`, "received");
+        displayMessage(`${index}-${sender}: ${message}`, "received");
       };
 
       socket.onclose = function (event) {
