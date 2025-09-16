@@ -55,12 +55,14 @@
         font-size: 0.9em;
         background-color: transparent; /* 系统消息无背景色 */
       }
+      /* 发送方（我） */
       .sent-message {
         float: right;
         color: white;
         background-color: #0084ff;
         margin-left: auto; /* 靠右对齐 */
       }
+      /* 接收方 */
       .received-message {
         float: left;
         background-color: #e4e6eb;
@@ -141,6 +143,7 @@
   </head>
   <body>
     <main>
+      <!-- 聊天框 -->
       <div id="chat-container">
         <div id="chat-box"></div>
         <div id="typing-indicator"></div>
@@ -155,6 +158,7 @@
         </div>
       </div>
 
+      <!-- 在线用户列表 -->
       <div id="user-list-container">
         <h3>在线用户 (<span id="user-count">0</span>)</h3>
         <ul id="user-list"></ul>
@@ -171,10 +175,15 @@
       const userListElement = document.getElementById("user-list");
       const userCountElement = document.getElementById("user-count");
 
+      // 页面可存在聊天记录的上限
       const MAX_MESSAGES = 100;
+      // 删除聊天记录的数量
       const DELETE_BATCH_SIZE = 20;
+      //计时器ID(用来关闭计时器)
       let typingTimer = null;
+      // 用户名
       let myUsername = null;
+      // 正在输入中的用户,会出现"正在输入中"文字.
       const typingUsers = new Set();
 
       function displayMessage(message, type) {
@@ -183,6 +192,7 @@
         p.className = type; // 直接使用类型作为 class
         chatBox.appendChild(p);
 
+        // 对聊天记录进行限制,超出删除DELETE_BATCH_SIZE条最早记录
         if (chatBox.children.length > MAX_MESSAGES) {
           for (let i = 0; i < DELETE_BATCH_SIZE && chatBox.firstChild; i++) {
             chatBox.removeChild(chatBox.firstChild);
@@ -191,31 +201,41 @@
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
+      /**
+       * 显示正在输入中..文字,用户刷新状态
+       */
       function updateTypingIndicator() {
         const users = Array.from(typingUsers);
         if (users.length === 0) {
           typingIndicatorDiv.textContent = "";
           return;
         }
+        // 1人时
         if (users.length === 1) {
           typingIndicatorDiv.textContent = `${users[0]} 正在输入...`;
           return;
         }
+        // 如果[2,3]人,显示"Alice、Bob、Charlie正在输入..." (join只在元素之间加入顿号)
         if (users.length <= 3) {
           typingIndicatorDiv.textContent = `${users.join("、")} 正在输入...`;
           return;
         }
+        // 如果输入人数大于3人,显示"Alice、Bob 及其他 X 人正在输入..."
         typingIndicatorDiv.textContent = `${users
           .slice(0, 2)
           .join("、")} 及其他 ${users.length - 2} 人正在输入...`;
       }
 
+      /**
+       * 用户在线列表的更新
+       */
       function updateUserList(users) {
         userListElement.innerHTML = "";
         userCountElement.textContent = users.length;
         users.sort().forEach((user) => {
           const li = document.createElement("li");
           li.textContent = user;
+          // 高亮自己
           if (user === myUsername) {
             li.textContent += " (我)";
             li.style.fontWeight = "bold";
@@ -224,6 +244,9 @@
         });
       }
 
+      /**
+       * 根据是否正在输入，发送 TYPING_START 或 TYPING_STOP 消息
+       */
       function sendTypingState(isTyping) {
         if (socket.readyState !== WebSocket.OPEN) return;
         socket.send(
@@ -236,17 +259,109 @@
         if (messageContent.trim() === "" || !myUsername) return;
 
         socket.send(JSON.stringify({ type: "CHAT", message: messageContent }));
-        displayMessage(messageContent, "sent-message"); // 使用 sent-message class
+        displayMessage(messageContent, "sent-message");
         messageInput.value = "";
 
         clearTimeout(typingTimer);
         sendTypingState(false);
       }
 
+      /**
+       * 连接建立时执行
+       */
       socket.onopen = function (event) {
         console.log(
           "WebSocket connection established. Please set your nickname."
         );
+        nameNickName();
+      };
+
+      /**
+       * 客户端收到服务器消息时执行
+       */
+      socket.onmessage = function (event) {
+        // alert(event.data); //查看服务器发来的原始数据
+        const data = JSON.parse(event.data);
+        const { type, sender, message, nickname, users } = data;
+
+        switch (type) {
+          // 系统消息
+          case "SYSTEM":
+            // 如果是昵称设置失败的消息,弹出提示重新输入
+            if (message.includes("昵称长度")) {
+              nameNickName();
+              return; //不显示这条错误消息
+            }
+            if (nickname) {
+              myUsername = nickname;
+              console.log("My username is set to:", myUsername);
+            }
+            displayMessage(message, "server-message");
+            break;
+          // 聊天消息
+          case "CHAT":
+            typingUsers.delete(sender);
+            updateTypingIndicator(); //收到消息立即刷新正在输入状态
+            if (sender !== myUsername) {
+              const formattedMessage = `${sender}: ${message}`;
+              displayMessage(formattedMessage, "received-message");
+            }
+            break;
+          // 正在输入
+          case "TYPING_START":
+            if (sender !== myUsername) {
+              typingUsers.add(sender);
+              updateTypingIndicator();
+            }
+            break;
+          // 停止输入
+          case "TYPING_STOP":
+            typingUsers.delete(sender);
+            updateTypingIndicator();
+            break;
+          // 更新在线用户列表
+          case "USER_LIST_UPDATE":
+            updateUserList(users);
+            break;
+        }
+      };
+
+      /**
+       * 连接关闭时执行
+       */
+      socket.onclose = function (event) {
+        displayMessage("您已从聊天室断开连接。", "server-message");
+      };
+
+      /**
+       * 连接错误时执行
+       */
+      socket.onerror = function (error) {
+        displayMessage("连接发生错误。", "server-message");
+        console.error("WebSocket Error:", error);
+      };
+
+      sendButton.addEventListener("click", sendMessage);
+      // 处理回车发送
+      messageInput.addEventListener("keyup", function (event) {
+        if (event.key === "Enter") sendMessage();
+      });
+
+      // "输入中"状态会有1.5秒的延迟消失时间(每次输入都会触发计时器并清除之前的计时器,所以只有不输入时1.5s才会发送停止信号)
+      messageInput.addEventListener("input", () => {
+        clearTimeout(typingTimer);
+        if (myUsername) {
+          sendTypingState(true);
+          typingTimer = setTimeout(() => {
+            sendTypingState(false);
+          }, 1500);
+        }
+      });
+
+      /**
+       * 输入昵称
+       */
+      const nameNickName = () => {
         const nickname = prompt(
           "请输入您的昵称 (2-15个字符):",
           `访客${Math.floor(1000 + Math.random() * 9000)}`
@@ -257,67 +372,6 @@
           );
         }
       };
-
-      socket.onmessage = function (event) {
-        const data = JSON.parse(event.data);
-        const { type, sender, message, nickname, users } = data;
-
-        switch (type) {
-          case "SYSTEM":
-            if (nickname) {
-              myUsername = nickname;
-              console.log("My username is set to:", myUsername);
-            }
-            displayMessage(message, "server-message");
-            break;
-          case "CHAT":
-            typingUsers.delete(sender);
-            updateTypingIndicator();
-            if (sender !== myUsername) {
-              const formattedMessage = `${sender}: ${message}`;
-              displayMessage(formattedMessage, "received-message");
-            }
-            break;
-          case "TYPING_START":
-            if (sender !== myUsername) {
-              typingUsers.add(sender);
-              updateTypingIndicator();
-            }
-            break;
-          case "TYPING_STOP":
-            typingUsers.delete(sender);
-            updateTypingIndicator();
-            break;
-          case "USER_LIST_UPDATE":
-            updateUserList(users);
-            break;
-        }
-      };
-
-      socket.onclose = function (event) {
-        displayMessage("您已从聊天室断开连接。", "server-message");
-      };
-
-      socket.onerror = function (error) {
-        displayMessage("连接发生错误。", "server-message");
-        console.error("WebSocket Error:", error);
-      };
-
-      sendButton.addEventListener("click", sendMessage);
-
-      messageInput.addEventListener("keyup", function (event) {
-        if (event.key === "Enter") sendMessage();
-      });
-
-      messageInput.addEventListener("input", () => {
-        clearTimeout(typingTimer);
-        if (myUsername) {
-          sendTypingState(true);
-          typingTimer = setTimeout(() => {
-            sendTypingState(false);
-          }, 1500);
-        }
-      });
     </script>
   </body>
 </html>

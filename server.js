@@ -85,12 +85,13 @@ wss.on("connection", (ws) => {
     const senderInfo = clients.get(ws);
 
     try {
-      const data = JSON.parse(messageString);
+      const { type, nickname, message } = JSON.parse(messageString);
 
-      switch (data.type) {
+      // 根据消息类型处理不同的操作
+      switch (type) {
         case "SET_NICKNAME":
           const oldUsername = senderInfo.username;
-          const newNickname = data.nickname ? data.nickname.trim() : "";
+          const newNickname = nickname ? nickname.trim() : "";
 
           // 验证昵称的有效性
           if (
@@ -143,14 +144,14 @@ wss.on("connection", (ws) => {
         case "CHAT":
           if (
             senderInfo.username &&
-            typeof data.message === "string" &&
-            data.message.trim() !== ""
+            typeof message === "string" &&
+            message.trim() !== ""
           ) {
             broadcast(
               {
                 type: "CHAT",
                 sender: senderInfo.username,
-                message: data.message.trim(),
+                message: message.trim(),
               },
               ws
             );
@@ -162,7 +163,7 @@ wss.on("connection", (ws) => {
           if (senderInfo.username) {
             broadcast(
               {
-                type: data.type,
+                type: type,
                 sender: senderInfo.username,
               },
               ws
@@ -171,7 +172,7 @@ wss.on("connection", (ws) => {
           break;
 
         default:
-          console.warn(`[Warning] 收到未知类型的消息: ${data.type}`);
+          console.warn(`[Warning] 收到未知类型的消息: ${type}`);
       }
     } catch (error) {
       console.error(
@@ -213,7 +214,7 @@ wss.on("connection", (ws) => {
 // 服务器启动成功日志
 console.log(`✅ 聊天室 WebSocket 服务器正在运行于 ws://localhost:${PORT}`);
 console.log(
-  `   东京时间: ${new Date().toLocaleTimeString("ja-JP", {
-    timeZone: "Asia/Tokyo",
+  `   北京时间: ${new Date().toLocaleTimeString("zh-CN", {
+    timeZone: "Asia/Shanghai",
   })}`
 );
