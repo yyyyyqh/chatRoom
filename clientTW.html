@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <title>WebSocket 聊天室 (Tailwind CSS)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="h-screen font-sans flex bg-gray-100 overflow-hidden">
+    <main class="flex-1 flex flex-col h-full">
+      <div id="chat-box" class="flex-1 p-5 overflow-y-auto"></div>
+
+      <div
+        id="typing-indicator"
+        class="h-6 px-5 text-sm text-gray-500 italic"
+      ></div>
+
+      <div
+        id="input-area"
+        class="flex items-center p-4 border-t border-gray-200 bg-white"
+      >
+        <input
+          type="text"
+          id="message-input"
+          placeholder="输入消息..."
+          autocomplete="off"
+          class="flex-1 border border-gray-300 rounded-full px-4 py-2 outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <button
+          id="send-button"
+          class="ml-3 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-full transition-colors"
+        >
+          发送
+        </button>
+      </div>
+    </main>
+
+    <aside
+      id="user-list-container"
+      class="w-56 min-w-[220px] border-l border-gray-200 bg-white flex flex-col"
+    >
+      <h3
+        class="p-4 border-b border-gray-200 text-base font-semibold text-gray-800"
+      >
+        在线用户 (<span id="user-count">0</span>)
+      </h3>
+      <ul id="user-list" class="overflow-y-auto"></ul>
+    </aside>
+
+    <script>
+      // --- JavaScript 逻辑 (完全保持不变) ---
+      const socket = new WebSocket("ws://localhost:8080");
+
+      const chatBox = document.getElementById("chat-box");
+      const messageInput = document.getElementById("message-input");
+      const sendButton = document.getElementById("send-button");
+      const typingIndicatorDiv = document.getElementById("typing-indicator");
+      const userListElement = document.getElementById("user-list");
+      const userCountElement = document.getElementById("user-count");
+
+      const MAX_MESSAGES = 100;
+      const DELETE_BATCH_SIZE = 20;
+      let typingTimer = null;
+      let myUsername = null;
+      const typingUsers = new Set();
+
+      /** 在聊天框中显示一条消息 (已适配 Tailwind CSS) */
+      function displayMessage(message, type) {
+        // 为每条消息创建一个 flex 容器，用于左右对齐
+        const messageContainer = document.createElement("div");
+        messageContainer.className = "w-full flex";
+
+        const p = document.createElement("p");
+        p.textContent = message;
+
+        // 根据消息类型应用 Tailwind CSS 类
+        switch (type) {
+          case "server-message":
+            messageContainer.className += " justify-center";
+            p.className = "text-center text-gray-500 italic text-sm";
+            break;
+          case "sent-message":
+            messageContainer.className += " justify-end";
+            p.className =
+              "text-white bg-blue-500 rounded-2xl py-2 px-4 max-w-[75%]";
+            break;
+          case "received-message":
+            messageContainer.className += " justify-start";
+            p.className =
+              "bg-gray-200 text-black rounded-2xl py-2 px-4 max-w-[75%]";
+            break;
+        }
+
+        p.classList.add("break-words"); // 确保长单词换行
+        messageContainer.appendChild(p);
+        chatBox.appendChild(messageContainer);
+
+        // 消息历史清理逻辑
+        if (chatBox.children.length > MAX_MESSAGES) {
+          for (let i = 0; i < DELETE_BATCH_SIZE && chatBox.firstChild; i++) {
+            chatBox.removeChild(chatBox.firstChild);
+          }
+        }
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+
+      /** 更新在线用户列表的UI (已适配 Tailwind CSS) */
+      function updateUserList(users) {
+        userListElement.innerHTML = "";
+        userCountElement.textContent = users.length;
+        users.sort().forEach((user) => {
+          const li = document.createElement("li");
+          li.textContent = user;
+          li.className =
+            "px-4 py-2 border-b border-gray-100 cursor-default hover:bg-gray-100 text-sm";
+          if (user === myUsername) {
+            li.textContent += " (我)";
+            li.classList.add("font-bold");
+          }
+          userListElement.appendChild(li);
+        });
+      }
+
+      /** 根据正在输入的用户列表，更新UI提示 */
+      function updateTypingIndicator() {
+        const users = Array.from(typingUsers);
+        if (users.length === 0) {
+          typingIndicatorDiv.textContent = "";
+          return;
+        }
+        if (users.length === 1) {
+          typingIndicatorDiv.textContent = `${users[0]} 正在输入...`;
+          return;
+        }
+        if (users.length <= 3) {
+          typingIndicatorDiv.textContent = `${users.join("、")} 正在输入...`;
+          return;
+        }
+        typingIndicatorDiv.textContent = `${users
+          .slice(0, 2)
+          .join("、")} 及其他 ${users.length - 2} 人正在输入...`;
+      }
+
+      /** 向服务器发送输入状态 */
+      function sendTypingState(isTyping) {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        socket.send(
+          JSON.stringify({ type: isTyping ? "TYPING_START" : "TYPING_STOP" })
+        );
+      }
+
+      /** 发送聊天消息 */
+      function sendMessage() {
+        const messageContent = messageInput.value;
+        if (messageContent.trim() === "" || !myUsername) return;
+
+        socket.send(JSON.stringify({ type: "CHAT", message: messageContent }));
+        displayMessage(messageContent, "sent-message");
+        messageInput.value = "";
+
+        clearTimeout(typingTimer);
+        sendTypingState(false);
+      }
+
+      // --- WebSocket 事件监听 (无变化) ---
+      socket.onopen = function (event) {
+        console.log(
+          "WebSocket connection established. Please set your nickname."
+        );
+        const nickname = prompt(
+          "请输入您的昵称 (2-15个字符):",
+          `访客${Math.floor(1000 + Math.random() * 9000)}`
+        );
+        if (nickname) {
+          socket.send(
+            JSON.stringify({ type: "SET_NICKNAME", nickname: nickname })
+          );
+        }
+      };
+
+      socket.onmessage = function (event) {
+        const data = JSON.parse(event.data);
+        const { type, sender, message, nickname, users } = data;
+
+        switch (type) {
+          case "SYSTEM":
+            if (nickname) {
+              myUsername = nickname;
+              console.log("My username is set to:", myUsername);
+            }
+            displayMessage(message, "server-message");
+            break;
+          case "CHAT":
+            typingUsers.delete(sender);
+            updateTypingIndicator();
+            if (sender !== myUsername) {
+              const formattedMessage = `${sender}: ${message}`;
+              displayMessage(formattedMessage, "received-message");
+            }
+            break;
+          case "TYPING_START":
+            if (sender !== myUsername) {
+              typingUsers.add(sender);
+              updateTypingIndicator();
+            }
+            break;
+          case "TYPING_STOP":
+            typingUsers.delete(sender);
+            updateTypingIndicator();
+            break;
+          case "USER_LIST_UPDATE":
+            updateUserList(users);
+            break;
+        }
+      };
+
+      socket.onclose = function (event) {
+        displayMessage("您已从聊天室断开连接。", "server-message");
+      };
+      socket.onerror = function (error) {
+        displayMessage("连接发生错误。", "server-message");
+        console.error("WebSocket Error:", error);
+      };
+
+      // --- 页面 UI 事件监听 (无变化) ---
+      sendButton.addEventListener("click", sendMessage);
+      messageInput.addEventListener("keyup", function (event) {
+        if (event.key === "Enter") sendMessage();
+      });
+      messageInput.addEventListener("input", () => {
+        clearTimeout(typingTimer);
+        if (myUsername) {
+          sendTypingState(true);
+          typingTimer = setTimeout(() => {
+            sendTypingState(false);
+          }, 1500);
+        }
+      });
+    </script>
+  </body>
+</html>
