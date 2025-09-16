@@ -1,13 +1,28 @@
+/*
+ * WebSocket Chat Room Server
+ * Author: Gemini AI & yqh
+ * Date: 2025-09-16
+ * Description: A Node.js WebSocket server supporting custom nicknames,
+ * online user lists, typing indicators, and message broadcasting.
+ */
+
 const WebSocket = require("ws");
 const { v4: uuidv4 } = require("uuid");
 
-const wss = new WebSocket.Server({ port: 8080 });
+// 服务器配置
+const PORT = 8080;
+
+// 初始化 WebSocket 服务器
+const wss = new WebSocket.Server({ port: PORT });
+
+// 使用 Map 存储所有连接的客户端及其元数据
+// Key: WebSocket instance (ws), Value: { id: string, username: string | null }
 const clients = new Map();
 
 /**
- * 检查昵称是否已被其他用户使用
- * @param {string} nickname 要检查的昵称
- * @returns {boolean} 如果已被使用则返回 true，否则返回 false
+ * 检查昵称是否已被其他用户使用 (忽略大小写)
+ * @param {string} nickname - 要检查的昵称
+ * @returns {boolean} - 如果已被使用则返回 true，否则返回 false
  */
 function isNicknameInUse(nickname) {
   for (const clientData of clients.values()) {
@@ -23,27 +38,48 @@ function isNicknameInUse(nickname) {
 
 /**
  * 向所有连接的客户端广播消息
- * @param {object} payload 要广播的JSON负载
- * @param {WebSocket} [senderWs] (可选) 发送者，如果提供，则不会向其广播
+ * @param {object} payload - 要广播的JSON负载对象
+ * @param {WebSocket} [senderWs] - (可选) 发送者，如果提供，则消息不会发送给此客户端
  */
 function broadcast(payload, senderWs) {
   const message = JSON.stringify(payload);
   wss.clients.forEach((client) => {
-    if (client !== senderWs && client.readyState === WebSocket.OPEN) {
+    // 排除发送者（如果已提供）
+    if (senderWs && client === senderWs) {
+      return;
+    }
+    // 只向已准备好的客户端发送
+    if (client.readyState === WebSocket.OPEN) {
       client.send(message);
     }
   });
 }
 
+/**
+ * 广播最新的在线用户列表给所有客户端
+ */
+function broadcastUserList() {
+  const userList = Array.from(clients.values())
+    .map((client) => client.username)
+    .filter((username) => username); // 过滤掉值为 null 或 undefined 的用户名
+
+  const payload = {
+    type: "USER_LIST_UPDATE",
+    users: userList.sort(), // 按字母顺序排序
+  };
+  broadcast(payload);
+}
+
+// 监听新的 WebSocket 连接
 wss.on("connection", (ws) => {
   const clientId = uuidv4();
   ws.id = clientId;
-  // 连接时先分配一个临时的唯一ID作为名字，直到用户设置昵称
-  const metadata = { id: clientId, username: null };
+  const metadata = { id: clientId, username: null }; // 初始用户名为 null
   clients.set(ws, metadata);
 
-  console.log(`一个客户端连接成功, Client ID: ${clientId}`);
+  console.log(`[Connection] 一个客户端连接成功, Client ID: ${clientId}`);
 
+  // 监听来自该客户端的消息
   ws.on("message", (message) => {
     const messageString = message.toString();
     const senderInfo = clients.get(ws);
@@ -56,7 +92,7 @@ wss.on("connection", (ws) => {
           const oldUsername = senderInfo.username;
           const newNickname = data.nickname ? data.nickname.trim() : "";
 
-          // 验证昵称
+          // 验证昵称的有效性
           if (
             !newNickname ||
             newNickname.length < 2 ||
@@ -74,34 +110,34 @@ wss.on("connection", (ws) => {
             ws.send(
               JSON.stringify({
                 type: "SYSTEM",
-                message: `错误: 昵称 "${newNickname}" 已被使用。`,
+                message: `错误: 昵称 "${newNickname}" 已被占用，请换一个。`,
               })
             );
             return;
           }
 
+          // 更新昵称
           senderInfo.username = newNickname;
-          console.log(`Client ID ${ws.id} 设置昵称为 ${newNickname}`);
+          console.log(
+            `[Nickname] Client ID ${ws.id} 设置昵称为 ${newNickname}`
+          );
 
-          // 发送欢迎消息给当前用户，并确认昵称
+          // 发送欢迎消息给当前用户，并确认最终昵称
           ws.send(
             JSON.stringify({
               type: "SYSTEM",
               sender: "系统",
               message: `欢迎 ${newNickname} 来到聊天室！`,
-              nickname: newNickname, // 把确认后的昵称发回去，让客户端设置自己的名字
+              nickname: newNickname, // 将确认后的昵称发回，让客户端设置自己的名字
             })
           );
 
-          // 向所有人广播更名/加入的消息
-          broadcast(
-            {
-              type: "SYSTEM",
-              sender: "系统",
-              message: `${newNickname} 加入了聊天室。`,
-            },
-            ws
-          ); // 广播给除自己外的其他人
+          // 广播系统消息和最新的用户列表
+          const joinMessage = oldUsername
+            ? `${oldUsername} 更名为 ${newNickname}`
+            : `${newNickname} 加入了聊天室。`;
+          broadcast({ type: "SYSTEM", message: joinMessage }, ws);
+          broadcastUserList();
           break;
 
         case "CHAT":
@@ -114,7 +150,7 @@ wss.on("connection", (ws) => {
               {
                 type: "CHAT",
                 sender: senderInfo.username,
-                message: data.message,
+                message: data.message.trim(),
               },
               ws
             );
@@ -133,30 +169,51 @@ wss.on("connection", (ws) => {
             );
           }
           break;
+
+        default:
+          console.warn(`[Warning] 收到未知类型的消息: ${data.type}`);
       }
     } catch (error) {
-      console.error("解析JSON失败或消息处理出错:", messageString, error);
+      console.error(
+        "[Error] 解析JSON失败或消息处理出错:",
+        messageString,
+        error
+      );
     }
   });
 
+  // 监听连接关闭事件
   ws.on("close", () => {
     const userInfo = clients.get(ws);
+    clients.delete(ws); // 从 Map 中移除客户端
+
     if (userInfo && userInfo.username) {
-      console.log(`用户 ${userInfo.username} (${ws.id}) 已断开连接。`);
+      console.log(
+        `[Disconnection] 用户 ${userInfo.username} (${ws.id}) 已断开连接。`
+      );
       broadcast({
         type: "SYSTEM",
         sender: "系统",
         message: `${userInfo.username} 离开了聊天室。`,
       });
+      broadcastUserList(); // 更新在线用户列表
     } else {
-      console.log(`一个未设置昵称的客户端 (ID: ${ws.id}) 已断开连接。`);
+      console.log(
+        `[Disconnection] 一个未设置昵称的客户端 (ID: ${ws.id}) 已断开连接。`
+      );
     }
-    clients.delete(ws);
+  });
+
+  // 监听连接错误事件
+  ws.on("error", (error) => {
+    console.error(`[Error] 客户端 (ID: ${ws.id}) 发生错误:`, error);
   });
 });
 
+// 服务器启动成功日志
+console.log(`✅ 聊天室 WebSocket 服务器正在运行于 ws://localhost:${PORT}`);
 console.log(
-  `聊天室 WebSocket 服务器正在运行于 ws://localhost:8080 (东京时间: ${new Date().toLocaleTimeString(
-    "ja-JP"
-  )})`
+  `   东京时间: ${new Date().toLocaleTimeString("ja-JP", {
+    timeZone: "Asia/Tokyo",
+  })}`
 );
